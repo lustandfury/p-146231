@@ -1,6 +1,11 @@
+
 import React from "react";
 
-export const Header = () => {
+interface HeaderProps {
+  onAddClick?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onAddClick }) => {
   return (
     <header className="flex w-full justify-between items-center h-[77px] px-5 py-1.5">
       <div>
@@ -31,7 +36,7 @@ export const Header = () => {
         </svg>
       </div>
       <div className="flex gap-[15px] items-center">
-        <button aria-label="Add new" className="p-2">
+        <button aria-label="Add new" className="p-2" onClick={onAddClick}>
           <svg
             width="32"
             height="33"
