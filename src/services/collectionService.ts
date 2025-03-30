@@ -75,7 +75,8 @@ class CollectionService {
       return [];
     }
 
-    return data;
+    // Return the direct data array instead of transforming it here
+    return data || [];
   }
 }
 
