@@ -23,9 +23,13 @@ export const CollectionGrid: React.FC<CollectionGridProps> = ({ collections }) =
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4">
-      {collections.map((collection) => (
-        <CollectionCard key={collection.id} collection={collection} />
+    <div className={`grid ${collections.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+      {collections.map((collection, index) => (
+        <CollectionCard 
+          key={collection.id} 
+          collection={collection} 
+          isFirst={index === 0}
+        />
       ))}
     </div>
   );

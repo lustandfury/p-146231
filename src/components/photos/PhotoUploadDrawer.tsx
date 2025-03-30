@@ -3,6 +3,9 @@ import React, { useState } from "react";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerFooter } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { Camera, X } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { useParams } from "react-router-dom";
 
 interface PhotoType {
   id: string;
@@ -21,24 +24,63 @@ export const PhotoUploadDrawer: React.FC<PhotoUploadDrawerProps> = ({
   onClose,
   onSave,
 }) => {
+  const { id: collectionId } = useParams<{ id: string }>();
   const [selectedImages, setSelectedImages] = useState<PhotoType[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setIsUploading(true);
       
-      // Simulate upload delay
-      setTimeout(() => {
-        const newPhotos: PhotoType[] = Array.from(e.target.files!).map((file, index) => ({
-          id: `new-photo-${Date.now()}-${index}`,
-          imageUrl: URL.createObjectURL(file),
-          caption: file.name
-        }));
+      try {
+        const uploadPromises = Array.from(e.target.files).map(async (file, index) => {
+          const fileName = `${Date.now()}-${index}-${file.name}`;
+          const { data, error } = await supabase.storage
+            .from('photos')
+            .upload(fileName, file);
+
+          if (error) {
+            console.error('Upload error:', error);
+            return null;
+          }
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('photos')
+            .getPublicUrl(fileName);
+
+          // Save photo to database
+          const { data: photoData, error: photoError } = await supabase
+            .from('photos')
+            .insert({
+              collection_id: collectionId,
+              storage_key: fileName,
+              caption: file.name
+            })
+            .select()
+            .single();
+
+          if (photoError) {
+            console.error('Photo insert error:', photoError);
+            return null;
+          }
+
+          return {
+            id: photoData.id,
+            imageUrl: publicUrl,
+            caption: file.name
+          };
+        });
+
+        const uploadedPhotos = await Promise.all(uploadPromises);
+        const validPhotos = uploadedPhotos.filter(photo => photo !== null) as PhotoType[];
         
-        setSelectedImages(prev => [...prev, ...newPhotos]);
+        setSelectedImages(prev => [...prev, ...validPhotos]);
         setIsUploading(false);
-      }, 1000);
+      } catch (error) {
+        console.error('Upload failed:', error);
+        toast.error('Photo upload failed');
+        setIsUploading(false);
+      }
     }
   };
 

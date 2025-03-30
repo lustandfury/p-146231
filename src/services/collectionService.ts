@@ -1,33 +1,62 @@
 
+import { supabase } from "@/integrations/supabase/client";
 import { CollectionType } from "@/components/collections/CollectionCard";
 
-// Mock database service - In a real app, this would connect to a backend
 class CollectionService {
-  private collections: CollectionType[] = [
-    {
-      id: "1",
-      title: "TCU Grad 2025",
-      imageUrl: "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188"
-    }
-  ];
-
   async getCollections(): Promise<CollectionType[]> {
-    return Promise.resolve([...this.collections]);
+    const { data, error } = await supabase
+      .from('collections')
+      .select('*');
+
+    if (error) {
+      console.error('Error fetching collections:', error);
+      return [];
+    }
+
+    return data.map(collection => ({
+      id: collection.id,
+      title: collection.name,
+      imageUrl: collection.image_url || "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188",
+      location: collection.location
+    }));
   }
 
   async addCollection(collection: Omit<CollectionType, "id">): Promise<CollectionType> {
-    const newCollection = {
-      ...collection,
-      id: `${this.collections.length + 1}`
+    const { data, error } = await supabase
+      .from('collections')
+      .insert({
+        name: collection.title,
+        image_url: collection.imageUrl,
+        location: collection.location
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error adding collection:', error);
+      throw error;
+    }
+
+    return {
+      id: data.id,
+      title: data.name,
+      imageUrl: data.image_url,
+      location: data.location
     };
-    
-    this.collections.push(newCollection);
-    return Promise.resolve(newCollection);
   }
 
   async addPhotoToCollection(collectionId: string, photoUrl: string): Promise<void> {
-    // In a real app, this would update the collection with new photos
-    return Promise.resolve();
+    const { error } = await supabase
+      .from('photos')
+      .insert({
+        collection_id: collectionId,
+        storage_key: photoUrl
+      });
+
+    if (error) {
+      console.error('Error adding photo to collection:', error);
+      throw error;
+    }
   }
 }
 
