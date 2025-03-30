@@ -30,13 +30,13 @@ const Index = () => {
     }
   };
 
-  const handleCreateCollection = async (name: string, location: string, imageUrl?: string) => {
+  const handleCreateCollection = async (name: string, location: string, imageUrl?: string, imageFile?: File) => {
     try {
       const newCollection = await collectionService.addCollection({
         title: name,
         imageUrl: imageUrl || "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188",
         location: location || undefined
-      });
+      }, imageFile);
       
       setCollections(prev => [...prev, newCollection]);
       toast.success(`Collection "${name}" created successfully!`);

@@ -2,179 +2,229 @@
 import React, { useState } from "react";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerFooter } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Camera, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useParams } from "react-router-dom";
-
-interface PhotoType {
-  id: string;
-  imageUrl: string;
-  caption?: string;
-}
+import { PhotoType } from "@/services/collectionService";
 
 interface PhotoUploadDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (photos: PhotoType[]) => void;
+  collectionId?: string;
 }
 
 export const PhotoUploadDrawer: React.FC<PhotoUploadDrawerProps> = ({
   isOpen,
   onClose,
   onSave,
+  collectionId
 }) => {
-  const { id: collectionId } = useParams<{ id: string }>();
-  const [selectedImages, setSelectedImages] = useState<PhotoType[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [captions, setCaptions] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setIsUploading(true);
-      
-      try {
-        const uploadPromises = Array.from(e.target.files).map(async (file, index) => {
-          const fileName = `${Date.now()}-${index}-${file.name}`;
-          const { data, error } = await supabase.storage
-            .from('photos')
-            .upload(fileName, file);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    
+    const newFiles = Array.from(e.target.files);
+    const newPreviews = newFiles.map(file => URL.createObjectURL(file));
+    const newCaptions = newFiles.map(() => "");
+    
+    setSelectedFiles(prevFiles => [...prevFiles, ...newFiles]);
+    setPreviews(prevPreviews => [...prevPreviews, ...newPreviews]);
+    setCaptions(prevCaptions => [...prevCaptions, ...newCaptions]);
+  };
 
-          if (error) {
-            console.error('Upload error:', error);
-            return null;
-          }
+  const handleRemoveFile = (index: number) => {
+    URL.revokeObjectURL(previews[index]);
+    
+    setSelectedFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
+    setPreviews(prevPreviews => prevPreviews.filter((_, i) => i !== index));
+    setCaptions(prevCaptions => prevCaptions.filter((_, i) => i !== index));
+  };
 
-          const { data: { publicUrl } } = supabase.storage
-            .from('photos')
-            .getPublicUrl(fileName);
+  const handleCaptionChange = (index: number, caption: string) => {
+    setCaptions(prevCaptions => {
+      const newCaptions = [...prevCaptions];
+      newCaptions[index] = caption;
+      return newCaptions;
+    });
+  };
 
-          // Save photo to database
-          const { data: photoData, error: photoError } = await supabase
-            .from('photos')
+  const handleUpload = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    setIsUploading(true);
+    const uploadedPhotos: PhotoType[] = [];
+    
+    try {
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const caption = captions[i];
+        const fileName = `${Date.now()}-${file.name}`;
+        
+        // Upload file to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('photos')
+          .upload(fileName, file);
+          
+        if (uploadError) throw uploadError;
+        
+        // Get the public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('photos')
+          .getPublicUrl(fileName);
+          
+        // Insert photo record in database
+        const { data: photoData, error: photoError } = await supabase
+          .from('photos')
+          .insert({
+            storage_key: fileName,
+            caption: caption,
+            collection_id: collectionId
+          })
+          .select()
+          .single();
+          
+        if (photoError) throw photoError;
+        
+        // Link photo to collection if collectionId is provided
+        if (collectionId) {
+          const { error: linkError } = await supabase
+            .from('collection_photos')
             .insert({
               collection_id: collectionId,
-              storage_key: fileName,
-              caption: file.name
-            })
-            .select()
-            .single();
-
-          if (photoError) {
-            console.error('Photo insert error:', photoError);
-            return null;
-          }
-
-          return {
-            id: photoData.id,
-            imageUrl: publicUrl,
-            caption: file.name
-          };
-        });
-
-        const uploadedPhotos = await Promise.all(uploadPromises);
-        const validPhotos = uploadedPhotos.filter(photo => photo !== null) as PhotoType[];
+              photo_id: photoData.id
+            });
+            
+          if (linkError) throw linkError;
+        }
         
-        setSelectedImages(prev => [...prev, ...validPhotos]);
-        setIsUploading(false);
-      } catch (error) {
-        console.error('Upload failed:', error);
-        toast.error('Photo upload failed');
-        setIsUploading(false);
+        // Add to our array of uploaded photos
+        uploadedPhotos.push({
+          id: photoData.id,
+          imageUrl: publicUrl,
+          caption: caption,
+          collection_id: collectionId,
+          storage_key: fileName
+        });
       }
-    }
-  };
-
-  const removeSelectedImage = (photoId: string) => {
-    setSelectedImages(prev => prev.filter(photo => photo.id !== photoId));
-  };
-
-  const handleSave = () => {
-    if (selectedImages.length > 0) {
-      onSave(selectedImages);
-      resetForm();
-    } else {
+      
+      // Clear all states
+      cleanupPreviews();
+      setSelectedFiles([]);
+      setPreviews([]);
+      setCaptions([]);
+      
+      toast.success(`${uploadedPhotos.length} photo${uploadedPhotos.length > 1 ? 's' : ''} uploaded successfully`);
+      onSave(uploadedPhotos);
       onClose();
+      
+    } catch (error) {
+      console.error('Error uploading photos:', error);
+      toast.error('Failed to upload photos');
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const resetForm = () => {
-    setSelectedImages([]);
+  const cleanupPreviews = () => {
+    previews.forEach(preview => URL.revokeObjectURL(preview));
+  };
+
+  const handleClose = () => {
+    cleanupPreviews();
+    setSelectedFiles([]);
+    setPreviews([]);
+    setCaptions([]);
+    onClose();
   };
 
   return (
-    <Drawer open={isOpen} onOpenChange={(open) => {
-      if (!open) {
-        onClose();
-        resetForm();
-      }
-    }} shouldScaleBackground>
-      <DrawerContent className="px-4 pb-6">
+    <Drawer open={isOpen} onOpenChange={handleClose}>
+      <DrawerContent className="px-4 pb-6 max-h-[80vh]">
         <DrawerHeader className="text-center">
           <DrawerTitle>Add Photos</DrawerTitle>
         </DrawerHeader>
         
-        <div className="flex flex-col space-y-4 py-4">
-          <div className="grid grid-cols-2 gap-4 max-h-60 overflow-y-auto">
-            {selectedImages.map(photo => (
-              <div key={photo.id} className="relative aspect-square">
-                <img 
-                  src={photo.imageUrl} 
-                  alt={photo.caption || "Preview"} 
-                  className="w-full h-full object-cover rounded-md"
-                />
-                <button 
-                  onClick={() => removeSelectedImage(photo.id)}
-                  className="absolute top-2 right-2 bg-black bg-opacity-50 rounded-full p-1"
-                  aria-label="Remove photo"
-                >
-                  <X size={16} className="text-white" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="border-2 border-dashed border-gray-300 rounded-md p-6 flex flex-col items-center justify-center h-32">
+        <div className="flex flex-col space-y-4 py-4 overflow-y-auto">
+          <div className="border-2 border-dashed border-gray-300 rounded-md p-4 flex flex-col items-center justify-center">
             <input
               type="file"
-              id="imageUpload"
+              id="photoUpload"
               accept="image/*"
-              onChange={handleImageUpload}
-              className="hidden"
               multiple
+              onChange={handleFileChange}
+              className="hidden"
             />
             <label 
-              htmlFor="imageUpload" 
-              className="flex flex-col items-center cursor-pointer"
+              htmlFor="photoUpload" 
+              className="flex flex-col items-center cursor-pointer p-4"
             >
-              {isUploading ? (
-                <div className="text-center">
-                  <div className="spinner mb-2 h-8 w-8 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin mx-auto"></div>
-                  <p className="text-sm text-gray-500">Uploading...</p>
-                </div>
-              ) : (
-                <>
-                  <div className="p-3 bg-blue-100 rounded-full mb-2">
-                    <Camera size={24} className="text-blue-600" />
-                  </div>
-                  <p className="text-sm text-gray-700 mb-1 font-medium">
-                    {selectedImages.length > 0 ? "Add more photos" : "Add photos"}
-                  </p>
-                  <p className="text-xs text-gray-500">or drag and drop</p>
-                </>
-              )}
+              <div className="p-3 bg-blue-100 rounded-full mb-2">
+                <Camera size={24} className="text-blue-600" />
+              </div>
+              <p className="text-sm font-medium mb-1">Upload photos</p>
+              <p className="text-xs text-gray-500">Click to browse or drag and drop</p>
             </label>
           </div>
-
-          <DrawerFooter className="px-0 mt-4">
-            <Button 
-              onClick={handleSave} 
-              className="w-full bg-blue-600"
-              disabled={selectedImages.length === 0 || isUploading}
-            >
-              {selectedImages.length > 0 ? `Add ${selectedImages.length} Photo${selectedImages.length !== 1 ? 's' : ''}` : 'Cancel'}
-            </Button>
-          </DrawerFooter>
+          
+          {previews.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="font-medium text-sm">Selected Photos ({previews.length})</h3>
+              
+              {previews.map((preview, index) => (
+                <div key={index} className="border rounded-md p-3">
+                  <div className="relative mb-2">
+                    <img 
+                      src={preview} 
+                      alt={`Preview ${index + 1}`}
+                      className="w-full h-48 object-cover rounded-md"
+                    />
+                    <button 
+                      onClick={() => handleRemoveFile(index)} 
+                      className="absolute top-2 right-2 bg-black bg-opacity-50 rounded-full p-1"
+                    >
+                      <X size={16} className="text-white" />
+                    </button>
+                  </div>
+                  
+                  <div className="mt-2">
+                    <Label htmlFor={`caption-${index}`} className="text-xs font-medium">
+                      Add a caption (optional)
+                    </Label>
+                    <Input 
+                      id={`caption-${index}`}
+                      value={captions[index] || ''}
+                      onChange={(e) => handleCaptionChange(index, e.target.value)}
+                      placeholder="Write a caption..."
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+        
+        <DrawerFooter>
+          <Button 
+            onClick={handleUpload}
+            disabled={isUploading || selectedFiles.length === 0}
+            className="w-full"
+          >
+            {isUploading ? (
+              <>
+                <span className="mr-2 spinner h-4 w-4 rounded-full border-2 border-gray-300 border-t-white animate-spin"></span>
+                Uploading...
+              </>
+            ) : `Upload ${selectedFiles.length > 0 ? selectedFiles.length : ''} Photo${selectedFiles.length !== 1 ? 's' : ''}`}
+          </Button>
+        </DrawerFooter>
       </DrawerContent>
     </Drawer>
   );

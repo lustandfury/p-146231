@@ -2,28 +2,19 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ChevronLeft, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { PhotoUploadDrawer } from "@/components/photos/PhotoUploadDrawer";
 import { supabase } from "@/integrations/supabase/client";
-import { collectionService } from "@/services/collectionService";
+import { collectionService, PhotoType } from "@/services/collectionService";
 import { CollectionType } from "@/components/collections/CollectionCard";
-
-interface PhotoType {
-  id: string;
-  imageUrl: string;
-  caption?: string;
-}
-
-type ActionType = "confirm" | "notMe" | "inappropriate";
+import { PhotoDetailModal } from "@/components/photos/PhotoDetailModal";
 
 const CollectionDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [selectedPhoto, setSelectedPhoto] = useState<PhotoType | null>(null);
-  const [actionType, setActionType] = useState<ActionType | null>(null);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
   const [photos, setPhotos] = useState<PhotoType[]>([]);
   const [collection, setCollection] = useState<CollectionType | null>(null);
@@ -58,7 +49,7 @@ const CollectionDetail = () => {
         if (photosError) throw photosError;
 
         // Convert Supabase photos to our PhotoType
-        if (photosData) {
+        if (photosData && photosData.length > 0) {
           const formattedPhotos: PhotoType[] = await Promise.all(
             photosData.map(async (photo) => {
               const { data: { publicUrl } } = supabase.storage
@@ -68,12 +59,28 @@ const CollectionDetail = () => {
               return {
                 id: photo.id,
                 imageUrl: publicUrl,
-                caption: photo.caption
+                caption: photo.caption,
+                collection_id: photo.collection_id,
+                storage_key: photo.storage_key
               };
             })
           );
 
           setPhotos(formattedPhotos);
+        } else {
+          // Check if collection has a cover image and add it to photos if it exists
+          if (collectionData.imageUrl && 
+              collectionData.imageUrl !== "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188") {
+            // This is a custom image, not the default placeholder
+            setPhotos([{
+              id: `cover-${id}`,
+              imageUrl: collectionData.imageUrl,
+              caption: collectionData.title,
+              collection_id: id
+            }]);
+          } else {
+            setPhotos([]);
+          }
         }
       } catch (error) {
         console.error('Error fetching collection and photos:', error);
@@ -86,30 +93,34 @@ const CollectionDetail = () => {
     fetchCollectionAndPhotos();
   }, [id, navigate]);
 
-  const handleAction = (photo: PhotoType, action: ActionType) => {
+  const handleOpenPhotoDetail = (photo: PhotoType) => {
     setSelectedPhoto(photo);
-    setActionType(action);
-    setIsDialogOpen(true);
+    setIsPhotoModalOpen(true);
   };
 
-  const confirmAction = () => {
-    if (!selectedPhoto || !actionType) return;
+  const handlePhotoReport = async (reportType: 'confirm' | 'notMe' | 'inappropriate') => {
+    if (!selectedPhoto) return;
     
-    switch (actionType) {
-      case "confirm":
-        toast.success("Photo confirmed as you");
-        break;
-      case "notMe":
-        toast.success("Reported as 'not me'");
-        break;
-      case "inappropriate":
-        toast.success("Reported as inappropriate");
-        break;
+    try {
+      await collectionService.reportPhoto(selectedPhoto.id, reportType);
+      
+      switch (reportType) {
+        case "confirm":
+          toast.success("Photo confirmed as you");
+          break;
+        case "notMe":
+          toast.success("Reported as 'not me'");
+          break;
+        case "inappropriate":
+          toast.success("Reported as inappropriate");
+          break;
+      }
+      
+      setIsPhotoModalOpen(false);
+    } catch (error) {
+      console.error('Error reporting photo:', error);
+      toast.error('Failed to report photo');
     }
-    
-    setIsDialogOpen(false);
-    setSelectedPhoto(null);
-    setActionType(null);
   };
 
   const handlePhotoUpload = (newPhotos: PhotoType[]) => {
@@ -117,33 +128,6 @@ const CollectionDetail = () => {
     toast.success(`${newPhotos.length} photo${newPhotos.length > 1 ? 's' : ''} added to collection`);
     setIsUploadDrawerOpen(false);
   };
-
-  const getDialogContent = () => {
-    switch (actionType) {
-      case "confirm":
-        return {
-          title: "Confirm Photo",
-          description: "Are you sure this photo contains you?"
-        };
-      case "notMe":
-        return {
-          title: "Report Photo",
-          description: "Report this photo as not containing you?"
-        };
-      case "inappropriate":
-        return {
-          title: "Report Photo",
-          description: "Report this photo as inappropriate?"
-        };
-      default:
-        return {
-          title: "",
-          description: ""
-        };
-    }
-  };
-
-  const dialogContent = getDialogContent();
 
   if (isLoading) {
     return (
@@ -190,61 +174,39 @@ const CollectionDetail = () => {
           <div className="grid grid-cols-2 gap-4">
             {photos.map(photo => (
               <div key={photo.id} className="mb-4">
-                <div className="relative">
+                <div 
+                  className="relative cursor-pointer" 
+                  onClick={() => handleOpenPhotoDetail(photo)}
+                >
                   <img 
                     src={photo.imageUrl} 
                     alt={photo.caption || collection.title} 
                     className="w-full h-auto aspect-square object-cover rounded-lg shadow-md"
                   />
                 </div>
-                <div className="mt-4 flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    className="flex-1 text-xs"
-                    onClick={() => handleAction(photo, "confirm")}
-                  >
-                    Confirm It's Me
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    className="flex-1 text-xs"
-                    onClick={() => handleAction(photo, "notMe")}
-                  >
-                    Not Me
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    className="flex-1 text-xs"
-                    onClick={() => handleAction(photo, "inappropriate")}
-                  >
-                    Report
-                  </Button>
-                </div>
+                {photo.caption && (
+                  <p className="mt-1 text-sm text-gray-600 truncate">{photo.caption}</p>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <AlertDialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{dialogContent.title}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {dialogContent.description}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmAction}>Confirm</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Photo Detail Modal */}
+      <PhotoDetailModal
+        photo={selectedPhoto}
+        isOpen={isPhotoModalOpen}
+        onClose={() => setIsPhotoModalOpen(false)}
+        onReport={handlePhotoReport}
+      />
 
+      {/* Photo Upload Drawer */}
       <PhotoUploadDrawer 
         isOpen={isUploadDrawerOpen}
         onClose={() => setIsUploadDrawerOpen(false)}
         onSave={handlePhotoUpload}
+        collectionId={id}
       />
     </div>
   );
