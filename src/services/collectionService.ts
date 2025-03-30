@@ -16,8 +16,8 @@ class CollectionService {
     return data.map(collection => ({
       id: collection.id,
       title: collection.name,
-      imageUrl: collection.image_url || "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188",
-      location: collection.location
+      imageUrl: collection.description || "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188",
+      location: collection.description // Using description field as location for now
     }));
   }
 
@@ -26,8 +26,7 @@ class CollectionService {
       .from('collections')
       .insert({
         name: collection.title,
-        image_url: collection.imageUrl,
-        location: collection.location
+        description: collection.location // Store location in description field
       })
       .select()
       .single();
@@ -40,23 +39,43 @@ class CollectionService {
     return {
       id: data.id,
       title: data.name,
-      imageUrl: data.image_url,
-      location: data.location
+      imageUrl: collection.imageUrl,
+      location: data.description
     };
   }
 
-  async addPhotoToCollection(collectionId: string, photoUrl: string): Promise<void> {
-    const { error } = await supabase
+  async getCollectionById(id: string): Promise<CollectionType | null> {
+    const { data, error } = await supabase
+      .from('collections')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error) {
+      console.error('Error fetching collection:', error);
+      return null;
+    }
+    
+    return {
+      id: data.id,
+      title: data.name,
+      imageUrl: data.description || "https://cdn.builder.io/api/v1/image/assets/TEMP/b4fcca08618062d33eb67fee4b4c56cb0d66b188",
+      location: data.description
+    };
+  }
+
+  async getPhotosByCollectionId(collectionId: string) {
+    const { data, error } = await supabase
       .from('photos')
-      .insert({
-        collection_id: collectionId,
-        storage_key: photoUrl
-      });
+      .select('*')
+      .eq('collection_id', collectionId);
 
     if (error) {
-      console.error('Error adding photo to collection:', error);
-      throw error;
+      console.error('Error fetching photos:', error);
+      return [];
     }
+
+    return data;
   }
 }
 

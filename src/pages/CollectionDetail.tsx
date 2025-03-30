@@ -7,6 +7,8 @@ import { ChevronLeft, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { PhotoUploadDrawer } from "@/components/photos/PhotoUploadDrawer";
 import { supabase } from "@/integrations/supabase/client";
+import { collectionService } from "@/services/collectionService";
+import { CollectionType } from "@/components/collections/CollectionCard";
 
 interface PhotoType {
   id: string;
@@ -24,21 +26,27 @@ const CollectionDetail = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
   const [photos, setPhotos] = useState<PhotoType[]>([]);
-  const [collection, setCollection] = useState<any>(null);
+  const [collection, setCollection] = useState<CollectionType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!id) {
+      toast.error("Collection ID is missing");
+      navigate("/");
+      return;
+    }
+
     const fetchCollectionAndPhotos = async () => {
       try {
+        setIsLoading(true);
         // Fetch collection details
-        const { data: collectionData, error: collectionError } = await supabase
-          .from('collections')
-          .select('*')
-          .eq('id', id)
-          .single();
-
-        if (collectionError) throw collectionError;
-
+        const collectionData = await collectionService.getCollectionById(id);
+        if (!collectionData) {
+          toast.error("Collection not found");
+          navigate("/");
+          return;
+        }
+        
         setCollection(collectionData);
 
         // Fetch photos for this collection
@@ -50,21 +58,23 @@ const CollectionDetail = () => {
         if (photosError) throw photosError;
 
         // Convert Supabase photos to our PhotoType
-        const formattedPhotos: PhotoType[] = await Promise.all(
-          photosData.map(async (photo) => {
-            const { data: { publicUrl } } = supabase.storage
-              .from('photos')
-              .getPublicUrl(photo.storage_key);
+        if (photosData) {
+          const formattedPhotos: PhotoType[] = await Promise.all(
+            photosData.map(async (photo) => {
+              const { data: { publicUrl } } = supabase.storage
+                .from('photos')
+                .getPublicUrl(photo.storage_key);
 
-            return {
-              id: photo.id,
-              imageUrl: publicUrl,
-              caption: photo.caption
-            };
-          })
-        );
+              return {
+                id: photo.id,
+                imageUrl: publicUrl,
+                caption: photo.caption
+              };
+            })
+          );
 
-        setPhotos(formattedPhotos);
+          setPhotos(formattedPhotos);
+        }
       } catch (error) {
         console.error('Error fetching collection and photos:', error);
         toast.error('Failed to load collection');
@@ -74,7 +84,7 @@ const CollectionDetail = () => {
     };
 
     fetchCollectionAndPhotos();
-  }, [id]);
+  }, [id, navigate]);
 
   const handleAction = (photo: PhotoType, action: ActionType) => {
     setSelectedPhoto(photo);
@@ -154,7 +164,7 @@ const CollectionDetail = () => {
           <button onClick={() => navigate("/")} className="mr-4">
             <ChevronLeft />
           </button>
-          <h1 className="text-lg font-semibold">{collection.name}</h1>
+          <h1 className="text-lg font-semibold">{collection.title}</h1>
         </div>
         <button 
           onClick={() => setIsUploadDrawerOpen(true)} 
@@ -183,7 +193,7 @@ const CollectionDetail = () => {
                 <div className="relative">
                   <img 
                     src={photo.imageUrl} 
-                    alt={photo.caption || collection.name} 
+                    alt={photo.caption || collection.title} 
                     className="w-full h-auto aspect-square object-cover rounded-lg shadow-md"
                   />
                 </div>

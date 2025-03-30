@@ -21,7 +21,7 @@ export const CollectionCard: React.FC<CollectionCardProps> = ({
   return (
     <Link 
       to={`/collection/${collection.id}`} 
-      className={`block relative ${isFirst ? 'w-full' : 'w-full'}`}
+      className={`block relative ${isFirst ? 'w-full col-span-2' : 'w-full'}`}
     >
       <div className="mb-5 relative">
         <img
